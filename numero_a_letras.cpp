@@ -1,99 +1,151 @@
-#include <string> // Proporciona funcionalidad para trabajar con cadenas de caracteres, como la clase string y varias funciones relacionadas con manipulación de cadenas.
-#include <cmath> // Proporciona funciones matemáticas comunes, como funciones trigonométricas, logarítmicas y exponenciales.
+#include <cmath> // llround e isfinite para redondear montos a centavos.
+#include <stdexcept> // out_of_range para rechazar montos que no se pueden representar.
+#include <string> // Clase string para construir el resultado.
 
 #include "numero_a_letras.hpp"
 
 using namespace std;
 
 // Arreglos de cadenas para convertir números a palabras
-string unidades[] = {"", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve"};
-string especiales[] = {"diez", "once", "doce", "trece", "catorce", "quince", "dieciseis", "diecisiete", "dieciocho", "diecinueve"};
-string decenas[] = {"", "", "veinte", "treinta", "cuarenta", "cincuenta", "sesenta", "setenta", "ochenta", "noventa"};
-string centenas[] = {"", "ciento", "doscientos", "trescientos", "cuatrocientos", "quinientos", "seiscientos", "setecientos", "ochocientos", "novecientos"};
+static const string unidades[] = {"", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve"};
+static const string especiales[] = {"diez", "once", "doce", "trece", "catorce", "quince", "dieciséis", "diecisiete", "dieciocho", "diecinueve"};
+static const string veintes[] = {"veinte", "veintiuno", "veintidós", "veintitrés", "veinticuatro", "veinticinco", "veintiséis", "veintisiete", "veintiocho", "veintinueve"};
+static const string decenas[] = {"", "", "veinte", "treinta", "cuarenta", "cincuenta", "sesenta", "setenta", "ochenta", "noventa"};
+static const string centenas[] = {"", "ciento", "doscientos", "trescientos", "cuatrocientos", "quinientos", "seiscientos", "setecientos", "ochocientos", "novecientos"};
 
-// Toma un número entero y lo convierte en su representación en palabras. "Acepta números de hasta billones"
-string convertirNumero(long long numero, bool esMil, bool esMillon) {
-    string resultado;
+// Escala larga del español: cada escala es un millón de veces la anterior.
+struct Escala {
+    unsigned long long valor;
+    const char* singular;
+    const char* plural;
+};
 
-    // Convertir millones
-    if (numero >= 1000000) {
-        if (numero / 1000000 == 1) {
-            resultado += "un millon ";
-        } else {
-            resultado += convertirNumero(numero / 1000000, false, true) + " millones ";
+static const Escala escalas[] = {
+    {1000000000000000000ULL, "trillón", "trillones"},
+    {1000000000000ULL, "billón", "billones"},
+    {1000000ULL, "millón", "millones"},
+};
+
+// Montos a partir de este valor no conservan los centavos exactos en un double.
+static const double MONTO_MAXIMO = 1e13;
+
+// Agrega una palabra al resultado, separada por un solo espacio.
+static void agregar(string& resultado, const string& palabra) {
+    if (palabra.empty()) {
+        return;
+    }
+    if (!resultado.empty()) {
+        resultado += ' ';
+    }
+    resultado += palabra;
+}
+
+// Convierte un dígito del 1 al 9; con apocopar, el 1 se escribe "un".
+static string convertirUnidad(int digito, bool apocopar) {
+    return (digito == 1 && apocopar) ? "un" : unidades[digito];
+}
+
+// Convierte un número del 1 al 999.
+static string convertirCentenas(int numero, bool apocopar) {
+    if (numero == 100) {
+        return "cien";
+    }
+
+    string resultado = centenas[numero / 100];
+    int resto = numero % 100;
+
+    if (resto >= 1 && resto <= 9) {
+        agregar(resultado, convertirUnidad(resto, apocopar));
+    } else if (resto >= 10 && resto <= 19) {
+        agregar(resultado, especiales[resto - 10]);
+    } else if (resto >= 20 && resto <= 29) {
+        agregar(resultado, (resto == 21 && apocopar) ? "veintiún" : veintes[resto - 20]);
+    } else if (resto >= 30) {
+        agregar(resultado, decenas[resto / 10]);
+        if (resto % 10 != 0) {
+            agregar(resultado, "y");
+            agregar(resultado, convertirUnidad(resto % 10, apocopar));
         }
-        numero %= 1000000;
     }
-    
-    // Convertir miles
-    if (numero >= 1000) {
-        if (numero == 100000) {
-            resultado += "cien mil ";
-        } else {
-            resultado += convertirNumero(numero / 1000, true) + " mil ";
-        }
-        numero %= 1000;
-    }
-
-    // Convertir centenas
-    if (numero >= 100) {
-        resultado += centenas[numero / 100] + " ";
-        numero %= 100;
-    }
-
-    // Convertir números del 10 al 19
-    if (numero >= 10 && numero <= 19) {
-        resultado += especiales[numero - 10] + " ";
-    }
-
-    // Convertir decenas
-    else if (numero >= 20) {
-        resultado += decenas[numero / 10] + " ";
-        numero %= 10;
-    }
-
-    // Convertir unidades
-    if (numero >= 1 && numero <= 9) {
-        resultado += unidades[numero] + " ";
-    }
-
-    // Eliminar espacio adicional despues de "mil" o "millon" si no es seguido por otro numero
-    if ((esMil || esMillon) && numero == 0)
-        resultado.pop_back();
-
     return resultado;
 }
 
-// Funcion para convertir un numero en letras (solo admite numeros hasta billones)
-string convertirNumeroALetras(double numero) {
+// Convierte un número del 1 al 999 999.
+static string convertirMiles(int numero, bool apocopar) {
+    string resultado;
+    int miles = numero / 1000;
+    int resto = numero % 1000;
 
+    // "mil", no "un mil"; y "veintiún mil", no "veintiuno mil"
+    if (miles == 1) {
+        resultado = "mil";
+    } else if (miles > 1) {
+        resultado = convertirCentenas(miles, true) + " mil";
+    }
 
-    long long parteEntera = static_cast<long long>(numero);
-    long long parteDecimal = static_cast<long long>(round((numero - parteEntera) * 100)); // Convertir a entero sin aproximar
+    if (resto > 0) {
+        agregar(resultado, convertirCentenas(resto, apocopar));
+    }
+    return resultado;
+}
 
+string convertirNumero(long long numero, bool apocopar) {
+    if (numero == 0) {
+        return "cero";
+    }
 
-    string cantidadEnLetras;
+    string resultado;
+    if (numero < 0) {
+        resultado = "menos";
+    }
 
-    // Convertir la parte entera
-    if (parteEntera == 0) {
-        cantidadEnLetras = "cero";
+    // Se usa el valor absoluto sin signo para que el mínimo de long long no desborde.
+    unsigned long long restante = static_cast<unsigned long long>(numero);
+    if (numero < 0) {
+        restante = 0ULL - restante;
+    }
+
+    // Cada grupo de seis cifras se convierte por separado y recibe el nombre de su escala.
+    for (const Escala& escala : escalas) {
+        int grupo = static_cast<int>(restante / escala.valor);
+        restante %= escala.valor;
+
+        if (grupo == 1) {
+            agregar(resultado, string("un ") + escala.singular);
+        } else if (grupo > 1) {
+            agregar(resultado, convertirMiles(grupo, true) + " " + escala.plural);
+        }
+    }
+
+    if (restante > 0) {
+        agregar(resultado, convertirMiles(static_cast<int>(restante), apocopar));
+    }
+    return resultado;
+}
+
+string convertirNumeroALetras(double monto) {
+    if (!isfinite(monto) || monto < 0 || monto >= MONTO_MAXIMO) {
+        throw out_of_range("El monto debe estar entre 0 y 9 999 999 999 999.99");
+    }
+
+    // Redondear una sola vez a centavos evita que 1.999 se convierta en "1 quetzal con 100 centavos".
+    long long totalCentavos = llround(monto * 100);
+    long long parteEntera = totalCentavos / 100;
+    long long parteDecimal = totalCentavos % 100;
+
+    string cantidadEnLetras = convertirNumero(parteEntera, true);
+
+    // "un millón de quetzales", pero "un millón quinientos mil quetzales"
+    if (parteEntera != 0 && parteEntera % 1000000 == 0) {
+        cantidadEnLetras += " de";
+    }
+    cantidadEnLetras += (parteEntera == 1) ? " quetzal" : " quetzales";
+
+    if (parteDecimal == 0) {
+        cantidadEnLetras += (parteEntera == 1) ? " exacto" : " exactos";
     } else {
-        cantidadEnLetras += convertirNumero(parteEntera);
-        if (parteEntera == 1 && parteEntera < 1000000)
-            cantidadEnLetras += " quetzal ";
-    else if (parteEntera > 1 && parteEntera < 1000000)
-    cantidadEnLetras += " quetzales ";
-    }
-
-    // Convertir la parte decimal
-    if (parteDecimal > 0) {
-    if (parteDecimal == 1)
-        cantidadEnLetras += "con un centavo";
-    else
-        cantidadEnLetras += "con " + convertirNumero(parteDecimal) + " centavos";
-    }
-    else {
-        cantidadEnLetras += "exactos";
+        cantidadEnLetras += " con " + convertirNumero(parteDecimal, true);
+        cantidadEnLetras += (parteDecimal == 1) ? " centavo" : " centavos";
     }
     return cantidadEnLetras;
 }
